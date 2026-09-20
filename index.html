@@ -318,6 +318,10 @@ function legProb(leg){
       if(tot===leg.line) return {p:1, push:true, sit:'total '+tot+' · line '+leg.line};
       return {p:(under?tot<leg.line:tot>leg.line)?1:0, sit:'total '+tot+' · line '+leg.line};
     }
+    // Points never come off the board: once the total is past the line the leg is decided.
+    if(tot>leg.line) return under
+      ? {p:0, sit:'total '+tot+' · already over '+leg.line+' · lost'}
+      : {p:1, sit:'total '+tot+' · already over '+leg.line+' · cashed'};
     var elT = Math.max(4, 60-t);
     var pace = 0.5*(tot/elT) + 0.5*(PTS_PER_GAME/60);
     var exp = pace*t, sdT = Math.max(0.4, TOTAL_SD*Math.sqrt(t/60));
