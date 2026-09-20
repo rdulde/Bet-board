@@ -303,6 +303,19 @@ function minsLeft(g){
   var m = +parts[0]||0, s = +parts[1]||0;
   return Math.max(0,(4-Math.min(g.q||1,4))*15 + m + s/60);
 }
+/* Fair win probability implied by a leg's American odds, with a typical two-way
+   overround (~4.5%) stripped out. null when the leg has no usable odds. */
+function impliedP(odds){
+  var o = +odds;
+  if(odds==null || isNaN(o) || o===0) return null;
+  var p = o<0 ? -o/(-o+100) : 100/(o+100);
+  return clamp(p/1.045, 0.03, 0.97);
+}
+function invcdf(p){
+  var lo=-6, hi=6;
+  for(var i=0;i<60;i++){ var mid=(lo+hi)/2; if(cdf(mid)<p) lo=mid; else hi=mid; }
+  return (lo+hi)/2;
+}
 function gameFor(abbr){
   var ks = Object.keys(GAMES);
   for(var i=0;i<ks.length;i++){ var g=GAMES[ks[i]]; if(g.home===abbr||g.away===abbr) return g; }
@@ -322,16 +335,25 @@ function legProb(leg){
     if(tot>leg.line) return under
       ? {p:0, sit:'total '+tot+' · already over '+leg.line+' · lost'}
       : {p:1, sit:'total '+tot+' · already over '+leg.line+' · cashed'};
+    // Pregame expectation for the full-game total, seeded from this leg's odds.
+    var pbT = impliedP(leg.odds);
+    var priorTot = pbT==null ? PTS_PER_GAME : leg.line + (under?-1:1)*invcdf(pbT)*TOTAL_SD;
     var elT = Math.max(4, 60-t);
-    var pace = 0.5*(tot/elT) + 0.5*(PTS_PER_GAME/60);
+    var wo = 0.5*Math.max(0, (elT-4)/56);           // weight on observed pace: 0 at kickoff → 0.5 late
+    var pace = wo*(tot/elT) + (1-wo)*(priorTot/60);
     var exp = pace*t, sdT = Math.max(0.4, TOTAL_SD*Math.sqrt(t/60));
     var z = (leg.line-tot-exp)/sdT;
-    return {p:clamp(under?cdf(z):1-cdf(z),0.001,0.999), sit:'total '+tot+' · projecting '+(tot+exp).toFixed(0)};
+    var pT = clamp(under?cdf(z):1-cdf(z),0.001,0.999);
+    if(g.state==='pre') return {p:pT, sit:'not started · book implies '+pct(pT)};
+    return {p:pT, sit:'total '+tot+' · projecting '+(tot+exp).toFixed(0)};
   }
   var m = leg.team===g.home ? g.hs-g.as : g.as-g.hs;
   var need = leg.type==='spread' ? -leg.line : 0;
   var elapsed = Math.max(4, 60-t);
-  var drift = clamp(FORM_WEIGHT*(m/elapsed)*t, -24, 24);
+  // Pregame expected margin (vs. what this leg needs) from the leg's odds; fades as minutes run off.
+  var pbM = impliedP(leg.odds);
+  var priorM = pbM==null ? 0 : need + invcdf(pbM)*MARGIN_SD;
+  var drift = clamp(priorM*(t/60) + FORM_WEIGHT*(m/elapsed)*t, -28, 28);
   var proj = m + drift;
   var sd = Math.max(0.4, MARGIN_SD*Math.sqrt(t/60));
   var stateTxt = m>0 ? 'up '+m : m<0 ? 'down '+(-m) : 'tied';
@@ -339,6 +361,10 @@ function legProb(leg){
     : need>0 ? 'needs to win by more than '+need
     : 'can lose by up to '+Math.abs(need)+' and still cash';
   var sit = stateTxt+' · '+needTxt+(t>0 ? ' · projecting '+(proj>=0?'+':'')+proj.toFixed(0) : '');
+  if(g.state==='pre'){
+    var p0 = clamp(cdf((proj-need)/sd),0.001,0.999);
+    return {p:p0, sit:'not started · '+needTxt+' · book implies '+pct(p0)};
+  }
   if(t<=0){
     var c0 = m-need;
     return {p:c0>0?1:c0===0?1:0, push:c0===0&&leg.type==='spread', sit:sit};
@@ -741,11 +767,12 @@ function render(skipGames){
     TICKETS.length+' open ticket'+(TICKETS.length===1?'':'s')+' · '+gk.length+' game'+(gk.length===1?'':'s')+' tracked';
 
   document.getElementById('note').innerHTML =
-    'Win chances are modelled, not book prices. Remaining margin is normal with SD '+MARGIN_SD+
-    '·√(minutes left ÷ 60), centred on a projected final margin that carries '+Math.round(FORM_WEIGHT*100)+
+    'Win chances are modelled, not book prices. Before kickoff each leg starts at the fair probability its own odds imply (vig removed). '+
+    'Remaining margin is normal with SD '+MARGIN_SD+
+    '·√(minutes left ÷ 60), centred on a projected final margin that blends the pregame expectation (fading as minutes run off) with '+Math.round(FORM_WEIGHT*100)+
     '% of the scoring rate a team has shown so far — so a side that is dominating is expected to keep adding, not to coast. '+
-    'Totals project the rest of the game at the midpoint between this game\'s pace and a '+PTS_PER_GAME+
-    '-point league average. Real cash-out numbers will differ. '+
+    'Totals project the rest of the game from the pregame expected total, shifting toward this game\'s actual pace as it goes. '+
+    'Real cash-out numbers will differ. '+
     'Scores are editable — typing in one turns live sync off. Bets and the trend are stored in this browser only.' +
     (lastErr?'<br><span class="err">'+lastErr+'</span>':'');
 
