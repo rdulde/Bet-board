@@ -1,0 +1,35 @@
+{
+  "week": "2026-W06",
+  "label": "NFL Week 6",
+  "updated": "2026-10-11T18:00:00Z",
+  "tickets": [
+    {
+      "id": "1",
+      "kind": "Straight",
+      "stake": 100,
+      "win": 68.97,
+      "legs": [
+        { "type": "ml", "team": "GB", "odds": -145 }
+      ]
+    },
+    {
+      "id": "2",
+      "kind": "Parlay · 2 legs",
+      "stake": 25,
+      "win": 90.91,
+      "legs": [
+        { "type": "spread", "team": "KC", "line": -3.5, "odds": -110 },
+        { "type": "over", "gameTeam": "BUF", "line": 44.5, "odds": -105, "label": "Buffalo Bills vs Miami Dolphins" }
+      ]
+    },
+    {
+      "id": "3",
+      "kind": "Straight",
+      "stake": 50,
+      "win": 45.45,
+      "legs": [
+        { "type": "under", "gameTeam": "DAL", "line": 47.5, "odds": -110, "label": "Dallas Cowboys vs Philadelphia Eagles" }
+      ]
+    }
+  ]
+}

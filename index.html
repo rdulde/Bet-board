@@ -87,6 +87,14 @@
     border-radius:6px;font-family:var(--mono);font-size:12px;padding:10px;line-height:1.55;resize:vertical}
   .btnrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;align-items:center}
   .hint{font-size:12.5px;color:var(--dim);line-height:1.6;margin:8px 0 0}
+  .banner{display:flex;flex-wrap:wrap;align-items:center;gap:10px;background:#1a2414;border:1px solid var(--gold);
+    border-radius:8px;padding:9px 13px;margin:-2px 0 14px;font-size:13.5px}
+  .banner[hidden]{display:none}
+  .banner b{font-family:var(--mono);font-weight:500;color:var(--gold)}
+  .reporow{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:14px 0 12px;
+    border-bottom:1px solid var(--line);margin-bottom:12px}
+  .reporow .hint{margin:0}
+  button:disabled{opacity:.55;cursor:default}
 
   .review{margin-top:16px}
   .rt{background:#0c1714;border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:10px}
@@ -198,9 +206,20 @@
     <button id="refresh">Refresh now</button>
   </header>
 
+  <div id="weekBanner" class="banner" hidden>
+    <span id="weekBannerText">New bets are posted.</span>
+    <button id="weekBannerBtn" class="on">Load them</button>
+    <button id="weekBannerSkip" class="ghost">Dismiss</button>
+  </div>
+
   <details class="import" id="importPanel">
-    <summary>Load this week's bets</summary>
+    <summary>Load or change bets</summary>
     <div class="ibody">
+      <div class="reporow">
+        <button id="loadRepoBtn" class="on">Load this week's bets</button>
+        <span class="hint" id="repoMsg">Pulls bets.json from this site, so every device gets the same tickets.</span>
+      </div>
+      <div class="lbl" style="margin-bottom:6px">Or read bets yourself from a screenshot</div>
       <div class="drop" id="drop" tabindex="0" role="button" aria-label="Drop a screenshot of your open bets, or click to choose a file">
         Drop a screenshot of your open bets here, or click to pick a file
       </div>
@@ -252,7 +271,9 @@ const PTS_PER_GAME = 45, MARGIN_SD = 13.45, TOTAL_SD = 11.8, FORM_WEIGHT = 0.30;
 const SERIES = ['#66c2ff','#ffc52f','#4cc26b','#ff8a5b','#e48fc0','#a88bff','#e0574c','#4fd1c5'];
 const DASH   = [[],[14,6],[26,8],[14,6,4,6],[36,10],[8,6],[22,7,6,7],[18,9]];
 const ESPN = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
-const STORE_BETS = 'betboard.bets.v3', STORE_HIST = 'betboard.hist.v3';
+const STORE_BETS = 'betboard.bets.v3', STORE_HIST = 'betboard.hist.v3', STORE_META = 'betboard.meta.v1';
+const BETS_URL = 'bets.json';   // this week's tickets, committed next to this page in the same repo
+const ALIAS = {WAS:'WSH',JAC:'JAX',LA:'LAR',ARZ:'ARI',GNB:'GB',KAN:'KC',NWE:'NE',NOR:'NO',SFO:'SF',TAM:'TB',LVR:'LV',OAK:'LV',SD:'LAC',STL:'LAR'};
 
 const TEAMS = {
  'ARIZONA CARDINALS':'ARI','ATLANTA FALCONS':'ATL','BALTIMORE RAVENS':'BAL','BUFFALO BILLS':'BUF',
@@ -276,8 +297,8 @@ const SAMPLE_TEXT = [
 '[403] TOTAL O44.5-105 (BUFFALO BILLS VRS MIAMI DOLPHINS)','25.0090.91'
 ].join('\n');
 
-let GAMES = {}, TICKETS = [], HIST = {t:[],p:{}};
-let draft = null, liveSync = true, lastErr = '', chart = null, hidden = {};
+let GAMES = {}, TICKETS = [], HIST = {t:[],p:{}}, META = {key:'',week:'',label:''};
+let draft = null, draftMeta = null, liveSync = true, lastErr = '', chart = null, hidden = {};
 let PREV = null, PREVSC = null;
 const REDUCE = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -437,8 +458,119 @@ function parseSlip(text){
   return out;
 }
 
-function showReview(tks, msg){
-  draft = tks;
+/* ---------- Weekly bets from the repo (bets.json) ---------- */
+function ticketsTxt(n){ return n+' ticket'+(n===1?'':'s'); }
+function hashStr(s){
+  var h = 5381;
+  for(var i=0;i<s.length;i++) h = ((h<<5)+h+s.charCodeAt(i))|0;
+  return (h>>>0).toString(36);
+}
+function hashTickets(tks){ return hashStr(JSON.stringify(tks)); }
+function teamKey(v){
+  if(v==null) return null;
+  var s = String(v).trim().toUpperCase();
+  if(!s) return null;
+  if(ALIAS[s]) s = ALIAS[s];
+  if(NICE[s]) return s;
+  return findTeam(s);
+}
+function cleanLeg(l){
+  if(!l || typeof l!=='object') return null;
+  var type = String(l.type||'').toLowerCase().replace(/\s+/g,'');
+  if(type==='moneyline') type = 'ml';
+  if(['ml','spread','under','over'].indexOf(type)<0) return null;
+  var isTot = type==='under'||type==='over';
+  var team = teamKey(isTot ? (l.gameTeam||l.team) : (l.team||l.gameTeam));
+  if(!team) return null;
+  var odds = (l.odds==null||l.odds==='') ? null : +l.odds;
+  if(odds!==null && isNaN(odds)) odds = null;
+  var line = (l.line==null||l.line==='') ? null : +l.line;
+  if(isTot){
+    if(line===null||isNaN(line)) return null;
+    return {type:type, gameTeam:team, line:line, odds:odds, label:l.label?String(l.label):''};
+  }
+  if(type==='spread'){
+    if(line===null||isNaN(line)) return null;
+    return {type:'spread', team:team, line:line, odds:odds};
+  }
+  return {type:'ml', team:team, odds:odds};
+}
+/* Accepts the bets.json wrapper {week,label,updated,tickets:[...]} or a bare ticket array (older Export JSON). */
+function normalizeBets(data){
+  var wrap = Array.isArray(data) ? {tickets:data} : (data && typeof data==='object' ? data : {});
+  var src = Array.isArray(wrap.tickets) ? wrap.tickets : [];
+  var tickets = [];
+  src.forEach(function(t){
+    if(!t || !Array.isArray(t.legs)) return;
+    var legs = t.legs.map(cleanLeg).filter(Boolean);
+    if(!legs.length) return;
+    tickets.push({
+      id: (t.id==null||t.id==='') ? String(tickets.length+1) : String(t.id),
+      kind: t.kind ? String(t.kind) : (legs.length>1 ? 'Parlay · '+legs.length+' legs' : 'Straight'),
+      stake: +t.stake||0, win: +t.win||0, legs: legs });
+  });
+  return {week: wrap.week==null?'':String(wrap.week), label: wrap.label==null?'':String(wrap.label),
+    updated: wrap.updated==null?'':String(wrap.updated), tickets: tickets};
+}
+function weekText(b){ return b.label || (b.week ? 'week '+b.week : 'this week'); }
+/* Replace the board's tickets. Clears the trend, since it is keyed by ticket id and the ids restart each week. */
+function applyTickets(tks, meta){
+  TICKETS = tks;
+  META = {key:hashTickets(tks), week:(meta&&meta.week)||'', label:(meta&&meta.label)||''};
+  store.set(STORE_BETS, TICKETS); store.set(STORE_META, META);
+  HIST = {t:[],p:{}}; store.set(STORE_HIST, HIST);
+  hidden = {}; PREV = null; draft = null; draftMeta = null;
+  document.getElementById('review').innerHTML = '';
+  document.getElementById('importPanel').open = false;
+  hideBanner();
+  buildChart(); pull();
+}
+var repoKey = '', bannerBets = null;
+async function fetchRepoBets(){
+  if(location.protocol==='file:') throw new Error('open the board from its GitHub Pages link, not from a file on disk');
+  var r = await fetch(BETS_URL+'?t='+Date.now(), {cache:'no-store'});
+  if(!r.ok) throw new Error('HTTP '+r.status+(r.status===404?' · no bets.json in the repo yet':''));
+  var b = normalizeBets(await r.json());
+  if(b.tickets.length) repoKey = hashTickets(b.tickets);
+  return b;
+}
+function loadedToast(b){ toast('Loaded <b>'+weekText(b)+'</b> · '+ticketsTxt(b.tickets.length), 'note'); }
+async function loadFromRepo(){
+  var msg = document.getElementById('repoMsg'), btn = document.getElementById('loadRepoBtn');
+  btn.disabled = true; msg.textContent = 'Fetching bets.json…';
+  try{
+    var b = await fetchRepoBets();
+    if(!b.tickets.length){ msg.innerHTML = '<span class="err">bets.json is there but holds no tickets yet.</span>'; return; }
+    applyTickets(b.tickets, b);
+    msg.innerHTML = '<span class="ok">Loaded '+ticketsTxt(b.tickets.length)+' · '+weekText(b)+'</span>';
+    loadedToast(b);
+  }catch(err){
+    msg.innerHTML = '<span class="err">Could not load bets.json ('+err.message+').</span>';
+  }finally{ btn.disabled = false; }
+}
+function showBanner(b){
+  bannerBets = b;
+  document.getElementById('weekBannerText').innerHTML =
+    'New bets are posted: <b>'+weekText(b)+'</b> · '+ticketsTxt(b.tickets.length);
+  document.getElementById('weekBanner').hidden = false;
+}
+function hideBanner(){ bannerBets = null; document.getElementById('weekBanner').hidden = true; }
+/* On load, and every 10 minutes, see whether the repo holds bets this browser has not applied yet.
+   Empty board: load them straight away. Otherwise offer them in the banner. */
+async function checkRepoBets(){
+  if(location.protocol==='file:') return;
+  try{
+    var b = await fetchRepoBets();
+    if(!b.tickets.length) return;
+    var key = hashTickets(b.tickets);
+    if(key===META.key){ hideBanner(); return; }
+    if(!TICKETS.length){ applyTickets(b.tickets, b); loadedToast(b); return; }
+    if(!bannerBets || hashTickets(bannerBets.tickets)!==key) showBanner(b);
+  }catch(e){}
+}
+
+function showReview(tks, msg, meta){
+  draft = tks; draftMeta = meta || null;
   var el = document.getElementById('review');
   if(!tks || !tks.length){
     el.innerHTML = '<p class="err">Nothing recognisable in that. Paste the text version, or load the example to see the shape it expects.</p>';
@@ -473,12 +605,7 @@ function showReview(tks, msg){
     });
   });
   document.getElementById('applyBtn').onclick = function(){
-    TICKETS = draft.filter(function(t){ return t.legs.length; });
-    store.set(STORE_BETS, TICKETS);
-    HIST = {t:[],p:{}}; store.set(STORE_HIST, HIST); hidden = {};
-    draft = null; el.innerHTML = '';
-    document.getElementById('importPanel').open = false;
-    buildChart(); pull();
+    applyTickets(draft.filter(function(t){ return t.legs.length; }), draftMeta || {week:'', label:''});
   };
   document.getElementById('cancelBtn').onclick = function(){ draft=null; el.innerHTML=''; };
 }
@@ -748,7 +875,8 @@ function render(skipGames){
       '<div class="tfoot"><span>fair value now <b>'+money(p*payout)+'</b></span>'+
       '<span>expected profit <b style="color:'+(tev>=0?'var(--good)':'var(--bad)')+'">'+money(tev)+'</b></span>'+
       '<span>full payout <b>'+money(payout)+'</b></span></div></div>';
-  }).join('') : '<div class="ticket"><div class="legs" style="padding:18px 16px;color:var(--mute);font-size:13.5px">No bets loaded. Open “Load this week’s bets” above.</div></div>';
+  }).join('') : '<div class="ticket"><div class="legs" style="padding:18px 16px;color:var(--mute);font-size:13.5px;display:flex;flex-wrap:wrap;align-items:center;gap:12px">'+
+      'No bets loaded. <button id="emptyLoadBtn" class="on">Load this week&#39;s bets</button></div></div>';
 
   var cards = [
     ['At risk', money(risk), TICKETS.length+' ticket'+(TICKETS.length===1?'':'s')],
@@ -764,7 +892,8 @@ function render(skipGames){
   }).join('');
 
   document.getElementById('subtitle').textContent =
-    TICKETS.length+' open ticket'+(TICKETS.length===1?'':'s')+' · '+gk.length+' game'+(gk.length===1?'':'s')+' tracked';
+    TICKETS.length+' open ticket'+(TICKETS.length===1?'':'s')+' · '+gk.length+' game'+(gk.length===1?'':'s')+' tracked'+
+    (META.label ? ' · '+META.label : '');
 
   document.getElementById('note').innerHTML =
     'Win chances are modelled, not book prices. Before kickoff each leg starts at the fair probability its own odds imply (vig removed). '+
@@ -773,7 +902,7 @@ function render(skipGames){
     '% of the scoring rate a team has shown so far — so a side that is dominating is expected to keep adding, not to coast. '+
     'Totals project the rest of the game from the pregame expected total, shifting toward this game\'s actual pace as it goes. '+
     'Real cash-out numbers will differ. '+
-    'Scores are editable — typing in one turns live sync off. Bets and the trend are stored in this browser only.' +
+    'Scores are editable — typing in one turns live sync off. Bets come from bets.json in this site\'s repo, or whatever you load by hand; the trend is stored in this browser only.' +
     (lastErr?'<br><span class="err">'+lastErr+'</span>':'');
 
   animateTickets(probs);
@@ -880,7 +1009,10 @@ document.getElementById('sampleBtn').onclick = function(){
   showReview(parseSlip(SAMPLE_TEXT),'Format example only — discard this and paste your own bets.');
 };
 document.getElementById('exportBtn').onclick = function(){
-  var blob = new Blob([JSON.stringify(TICKETS,null,2)],{type:'application/json'});
+  // Same shape as bets.json. Ticket numbers become 1..n so the file is safe to commit to a public repo.
+  var out = {week: META.week||'', label: META.label||'', updated: new Date().toISOString(),
+    tickets: TICKETS.map(function(t,i){ return Object.assign({}, t, {id:String(i+1)}); })};
+  var blob = new Blob([JSON.stringify(out,null,2)],{type:'application/json'});
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = 'bets.json'; a.click();
   setTimeout(function(){ URL.revokeObjectURL(a.href); }, 1000);
@@ -891,7 +1023,10 @@ document.getElementById('importJsonBtn').onclick = function(){
     var f = i.files[0]; if(!f) return;
     var rd = new FileReader();
     rd.onload = function(){
-      try{ showReview(JSON.parse(rd.result),'Loaded from JSON.'); }
+      try{
+        var b = normalizeBets(JSON.parse(rd.result));
+        showReview(b.tickets, 'Loaded from JSON'+(b.label?' · '+b.label:'')+'.', b);
+      }
       catch(err){ document.getElementById('importMsg').innerHTML = '<span class="err">That file is not valid JSON.</span>'; }
     };
     rd.readAsText(f);
@@ -899,8 +1034,11 @@ document.getElementById('importJsonBtn').onclick = function(){
   i.click();
 };
 document.getElementById('newWeekBtn').onclick = function(){
-  TICKETS = []; HIST = {t:[],p:{}}; hidden = {}; GAMES = {};
-  store.set(STORE_BETS,TICKETS); store.set(STORE_HIST,HIST);
+  TICKETS = []; HIST = {t:[],p:{}}; hidden = {}; GAMES = {}; PREV = null;
+  // Keep the repo's current file marked as seen, so clearing the board does not just reload it.
+  META = {key: repoKey || META.key, week:'', label:''};
+  store.set(STORE_BETS,TICKETS); store.set(STORE_HIST,HIST); store.set(STORE_META,META);
+  hideBanner();
   document.getElementById('pasteBox').value = '';
   document.getElementById('review').innerHTML = '';
   document.getElementById('importPanel').open = true;
@@ -950,12 +1088,29 @@ async function readImage(file){
   }
 }
 
+document.getElementById('loadRepoBtn').onclick = loadFromRepo;
+document.getElementById('weekBannerBtn').onclick = function(){
+  if(!bannerBets) return;
+  var b = bannerBets; applyTickets(b.tickets, b); loadedToast(b);
+};
+document.getElementById('weekBannerSkip').onclick = function(){
+  if(bannerBets){ META.key = hashTickets(bannerBets.tickets); store.set(STORE_META, META); }
+  hideBanner();
+};
+document.getElementById('tickets').addEventListener('click', function(e){
+  if(e.target && e.target.id==='emptyLoadBtn'){ document.getElementById('importPanel').open = true; loadFromRepo(); }
+});
+
 TICKETS = store.get(STORE_BETS, []);
 HIST = store.get(STORE_HIST, {t:[],p:{}});
 if(!HIST || !HIST.t){ HIST = {t:[],p:{}}; }
+META = store.get(STORE_META, null);
+if(!META || typeof META!=='object') META = {key:'',week:'',label:''};
 if(!TICKETS.length) document.getElementById('importPanel').open = true;
 buildChart(); render(); pull();
+checkRepoBets();
 setInterval(function(){ if(liveSync) pull(); }, 30000);
+setInterval(checkRepoBets, 10*60*1000);
 </script>
 </body>
 </html>
