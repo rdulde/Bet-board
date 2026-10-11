@@ -1,6 +1,1 @@
-{
-  "week": "",
-  "label": "No bets posted yet",
-  "updated": "2026-10-11T00:00:00Z",
-  "tickets": []
-}
+{"week":"2026-W05","label":"NFL Week 5 - Oct 11, 2026","updated":"2026-10-11T16:00:00Z","tickets":[{"id":"1","stake":100,"win":331.74,"legs":[{"type":"ml","team":"DET","odds":-249},{"type":"ml","team":"PIT","odds":-163},{"type":"over","gameTeam":"MIN","line":41.5,"odds":-110,"label":"Minnesota Vikings vs New Orleans Saints"}]},{"id":"2","stake":100,"win":156,"legs":[{"type":"ml","team":"LV","odds":156}]},{"id":"3","stake":100,"win":147,"legs":[{"type":"ml","team":"SF","odds":147}]},{"id":"4","stake":100,"win":90.91,"legs":[{"type":"over","gameTeam":"MIN","line":42,"odds":-110,"label":"Minnesota Vikings vs New Orleans Saints"}]},{"id":"5","stake":200,"win":210,"legs":[{"type":"ml","team":"GB","odds":105}]},{"id":"6","stake":100,"win":90.91,"legs":[{"type":"spread","team":"NYJ","line":-2.5,"odds":-110}]},{"id":"7","stake":100,"win":90.91,"legs":[{"type":"under","gameTeam":"DET","line":54.5,"odds":-110,"label":"Detroit Lions vs Arizona Cardinals"}]},{"id":"8","stake":100,"win":90.91,"legs":[{"type":"spread","team":"DET","line":-5.5,"odds":-110}]},{"id":"9","stake":150,"win":136.36,"legs":[{"type":"spread","team":"LV","line":3.5,"odds":-110}]}]}
